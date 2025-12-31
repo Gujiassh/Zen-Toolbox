@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Tool, ToolId } from './types';
 import { ICONS } from './constants';
 import HtmlFetcher from './tools/HtmlFetcher';
@@ -6,6 +6,7 @@ import Dashboard from './components/Dashboard';
 
 const App: React.FC = () => {
   const [activeToolId, setActiveToolId] = useState<ToolId>(ToolId.DASHBOARD);
+  const [isMaximized, setIsMaximized] = useState(false);
   
   // Configuration of available tools
   const tools: Tool[] = [
@@ -19,6 +20,22 @@ const App: React.FC = () => {
   ];
 
   const activeTool = tools.find(t => t.id === activeToolId);
+  const windowControls = (window as any)?.desktop?.windowControls;
+
+  useEffect(() => {
+    if (!windowControls?.onMaximizeChanged) return;
+    const off = windowControls.onMaximizeChanged((val: boolean) => setIsMaximized(!!val));
+    return () => {
+      if (typeof off === 'function') off();
+    };
+  }, [windowControls]);
+
+  const handleWindowControl = (action: 'minimize' | 'toggle' | 'close') => {
+    if (!windowControls) return;
+    if (action === 'minimize') windowControls.minimize?.();
+    if (action === 'toggle') windowControls.toggleMaximize?.();
+    if (action === 'close') windowControls.close?.();
+  };
 
   const renderContent = () => {
     if (activeToolId === ToolId.DASHBOARD) {
@@ -33,7 +50,7 @@ const App: React.FC = () => {
       {/* Sidebar - Fixed width, border right, software look */}
       <aside className="w-[260px] flex-shrink-0 flex flex-col bg-black border-r border-app-border">
         {/* App Title Area */}
-        <div className="h-14 flex items-center px-4 border-b border-app-border select-none">
+        <div className="h-14 flex items-center px-4 border-b border-app-border select-none app-drag">
           <div className="w-6 h-6 bg-white rounded flex items-center justify-center text-black mr-3">
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
@@ -82,19 +99,53 @@ const App: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 bg-app-bg relative">
         {/* Top Header - Contextual */}
-        <header className="h-14 flex items-center justify-between px-6 border-b border-app-border bg-app-bg/50 backdrop-blur-sm z-10 sticky top-0">
-          <div className="flex items-center gap-2 text-sm text-app-muted">
+        <header className="h-14 flex items-center justify-between px-6 border-b border-app-border bg-app-bg/50 backdrop-blur-sm z-10 sticky top-0 app-drag">
+          <div className="flex items-center gap-2 text-sm text-app-muted app-no-drag">
              <span className="hover:text-white cursor-pointer transition-colors" onClick={() => setActiveToolId(ToolId.DASHBOARD)}>Home</span>
              <span className="text-zinc-700">/</span>
              <span className="text-white font-medium">
                {activeToolId === ToolId.DASHBOARD ? 'Dashboard' : activeTool?.name}
              </span>
           </div>
-          <div className="flex items-center gap-2">
-             {/* Optional header actions */}
-             <button className="text-zinc-500 hover:text-white transition-colors">
-               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-             </button>
+          <div className="flex items-center gap-2 app-no-drag">
+             {windowControls ? (
+               <>
+                 <button
+                   className="w-9 h-9 flex items-center justify-center rounded hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors"
+                   onClick={() => handleWindowControl('minimize')}
+                   title="Minimize"
+                 >
+                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                     <path strokeLinecap="round" d="M5 12h14" />
+                   </svg>
+                 </button>
+                 <button
+                   className="w-9 h-9 flex items-center justify-center rounded hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors"
+                   onClick={() => handleWindowControl('toggle')}
+                   title={isMaximized ? 'Restore' : 'Maximize'}
+                 >
+                   {isMaximized ? (
+                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                       <path strokeLinecap="round" strokeLinejoin="round" d="M7 9h8a2 2 0 012 2v6" />
+                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h8a2 2 0 012 2v8" />
+                     </svg>
+                   ) : (
+                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                       <rect x="6" y="6" width="12" height="12" rx="1.5" ry="1.5" />
+                     </svg>
+                   )}
+                 </button>
+                 <button
+                   className="w-9 h-9 flex items-center justify-center rounded hover:bg-red-900/70 text-zinc-400 hover:text-white transition-colors"
+                   onClick={() => handleWindowControl('close')}
+                   title="Close"
+                 >
+                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6l-12 12" />
+                   </svg>
+                 </button>
+               </>
+             ) : null}
           </div>
         </header>
 

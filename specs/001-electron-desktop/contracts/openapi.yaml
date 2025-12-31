@@ -1,0 +1,211 @@
+openapi: 3.0.3
+info:
+  title: Zen Toolbox Desktop SEO Fetcher API (Local IPC/HTTP Contract)
+  version: 1.0.0
+servers:
+  - url: http://localhost:8723
+    description: Local Electron IPC/HTTP bridge (not exposed publicly)
+paths:
+  /seo/fetch:
+    post:
+      summary: Fetch HTML for a URL and return raw content plus parsed SEO signals
+      operationId: seoFetch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeoFetchRequest'
+      responses:
+        '200':
+          description: Fetch completed (success or handled error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeoFetchResponse'
+        '400':
+          description: Validation failure (invalid URL or parameters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /app/locale:
+    put:
+      summary: Set current UI locale
+      operationId: setLocale
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locale]
+              properties:
+                locale:
+                  type: string
+                  enum: [zh-CN, en-US]
+      responses:
+        '200':
+          description: Locale updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current:
+                    type: string
+                    enum: [zh-CN, en-US]
+                  available:
+                    type: array
+                    items:
+                      type: string
+                      enum: [zh-CN, en-US]
+  /window/control:
+    post:
+      summary: Invoke a window control action
+      operationId: windowControl
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [minimize, maximize, unmaximize, close]
+      responses:
+        '200':
+          description: Action executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+  /health:
+    get:
+      summary: Health check
+      operationId: health
+      responses:
+        '200':
+          description: Service ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+components:
+  schemas:
+    SeoFetchRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Absolute URL with scheme
+        language:
+          type: string
+          enum: [zh-CN, en-US]
+          default: zh-CN
+        timeoutMs:
+          type: integer
+          minimum: 3000
+          maximum: 15000
+          default: 10000
+        maxBytes:
+          type: integer
+          minimum: 100000
+          maximum: 5000000
+          default: 3000000
+        userAgent:
+          type: string
+          description: Optional override of default user agent
+    SeoFetchResponse:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        result:
+          $ref: '#/components/schemas/SeoResult'
+        error:
+          $ref: '#/components/schemas/ErrorInfo'
+    SeoResult:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          minimum: 100
+          maximum: 599
+        redirectedTo:
+          type: string
+          format: uri
+        durationMs:
+          type: integer
+        html:
+          type: string
+          description: Raw HTML (may be truncated)
+        seo:
+          $ref: '#/components/schemas/SeoSignals'
+    SeoSignals:
+      type: object
+      properties:
+        title:
+          type: string
+        metaDescription:
+          type: string
+        metaKeywords:
+          type: string
+        metaRobots:
+          type: string
+        canonical:
+          type: string
+          format: uri
+        headings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Heading'
+        textPreview:
+          type: array
+          items:
+            type: string
+        sitemapLinks:
+          type: array
+          items:
+            type: string
+        robotsTxt:
+          type: string
+    Heading:
+      type: object
+      required: [tag, text]
+      properties:
+        tag:
+          type: string
+          enum: [h1, h2, h3, h4, h5, h6]
+        text:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+          enum: [network, timeout, parse, invalid_input]
+    ErrorInfo:
+      type: object
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+          enum: [network, timeout, parse, invalid_input]

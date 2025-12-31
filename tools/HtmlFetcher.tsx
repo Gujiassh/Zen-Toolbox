@@ -1,13 +1,65 @@
-import React, { useState, useCallback } from 'react';
+// Input: React renderer; optional Electron preload bridge (window.desktop.seoFetch)
+// Output: UI to fetch and display raw HTML (uses IPC when可用，fallback to CORS proxy)
+// Pos: Renderer SEO fetch tool (update me when folder changes)
+
+import React, { useState, useCallback, useEffect } from 'react';
 import { Card, Button, Input, Badge, Separator } from '../components/ui';
 import { ICONS } from '../constants';
+import prettier from 'prettier/standalone';
+import * as parserHtml from 'prettier/plugins/html';
+
+declare global {
+  interface Window {
+    desktop?: {
+      seoFetch?: (url: string) => Promise<{ success: boolean; html?: string; statusCode?: number; redirectedTo?: string; error?: string }>;
+      windowControls?: unknown;
+    };
+  }
+}
 
 const HtmlFetcher: React.FC = () => {
   const [url, setUrl] = useState('');
   const [content, setContent] = useState<string | null>(null);
+  const [formattedContent, setFormattedContent] = useState<string | null>(null);
+  const [showFormatted, setShowFormatted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fetchStats, setFetchStats] = useState<{ size: string; time: string } | null>(null);
+  const [fetchStats, setFetchStats] = useState<{ size: string; time: string; status?: string } | null>(null);
+  const isElectron = Boolean(window.desktop?.seoFetch);
+  const STORAGE_KEY = 'htmlFetcher:lastUrl';
+
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(STORAGE_KEY);
+      if (cached) {
+        setUrl(cached);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const formatHtml = useCallback((html: string) => {
+    try {
+      return prettier.format(html, {
+        parser: 'html',
+        plugins: [parserHtml],
+        printWidth: 100,
+      });
+    } catch {
+      return html;
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (url) {
+        localStorage.setItem(STORAGE_KEY, url);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [url]);
 
   const handleFetch = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,37 +78,63 @@ const HtmlFetcher: React.FC = () => {
     const startTime = performance.now();
 
     try {
-      // Using allorigins.win as a CORS proxy
+      const endWithError = (message: string) => {
+        setError(message);
+        setFetchStats(null);
+      };
+
+      // Prefer Electron IPC when available to bypass CORS entirely
+      if (window.desktop?.seoFetch) {
+        const result = await window.desktop.seoFetch(targetUrl);
+        const endTime = performance.now();
+        if (!result.success || !result.html) {
+          endWithError(result.error || 'Fetch failed');
+        } else {
+          const pretty = formatHtml(result.html);
+          setContent(result.html);
+          setFormattedContent(pretty);
+          setShowFormatted(Boolean(pretty));
+          setFetchStats({
+            size: (new TextEncoder().encode(result.html).length / 1024).toFixed(2) + ' KB',
+            time: `${(endTime - startTime).toFixed(0)}ms`,
+            status: `${result.statusCode ?? '200'}${result.redirectedTo ? ' (redirected)' : ''}`,
+          });
+        }
+        return;
+      }
+
+      // Browser fallback via CORS proxy (best-effort, may be blocked)
       const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-      
       const response = await fetch(proxyUrl);
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      
       const data = await response.json();
       const endTime = performance.now();
-      
       if (data.contents) {
+        const pretty = formatHtml(data.contents);
         setContent(data.contents);
+        setFormattedContent(pretty);
+        setShowFormatted(Boolean(pretty));
         setFetchStats({
           size: (new TextEncoder().encode(data.contents).length / 1024).toFixed(2) + ' KB',
-          time: ((endTime - startTime).toFixed(0)) + 'ms'
+          time: `${(endTime - startTime).toFixed(0)}ms`,
+          status: '200',
         });
       } else {
         throw new Error('No content returned or URL blocked.');
       }
-
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
     } finally {
       setLoading(false);
     }
-  }, [url]);
+  }, [url, formatHtml]);
 
   const copyToClipboard = useCallback(() => {
-    if (content) {
-      navigator.clipboard.writeText(content);
+    const text = showFormatted ? formattedContent : content;
+    if (text) {
+      navigator.clipboard.writeText(text);
     }
-  }, [content]);
+  }, [content, formattedContent, showFormatted]);
 
   return (
     <div className="space-y-6">
@@ -64,8 +142,13 @@ const HtmlFetcher: React.FC = () => {
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-medium text-white">HTML Fetcher</h2>
         <p className="text-xs text-app-muted max-w-2xl">
-          Retrieve source code from a URL. Requests are routed via CORS proxy to bypass browser restrictions.
+          Retrieve source code from a URL. Uses desktop bridge when available to bypass CORS; falls back to proxy otherwise.
         </p>
+        {!isElectron && (
+          <p className="text-xs text-amber-400">
+            Desktop bridge unavailable - run via Electron (pnpm dev) to bypass CORS.
+          </p>
+        )}
       </div>
 
       {/* Input Section */}
@@ -106,7 +189,7 @@ const HtmlFetcher: React.FC = () => {
              <div className="flex items-center gap-2">
                <div className="flex items-center gap-1.5 bg-black border border-app-border rounded px-2 py-1">
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                  <span className="text-[10px] font-mono text-zinc-400">200 OK</span>
+                  <span className="text-[10px] font-mono text-zinc-400">{fetchStats?.status || '200 OK'}</span>
                </div>
                {fetchStats && (
                  <>
@@ -114,6 +197,23 @@ const HtmlFetcher: React.FC = () => {
                    <Badge variant="outline">{fetchStats.time}</Badge>
                  </>
                )}
+               <div className="ml-3 flex items-center gap-1">
+                 <Button
+                   variant={showFormatted ? 'ghost' : 'secondary'}
+                   onClick={() => setShowFormatted(false)}
+                   className="text-xs h-7 px-3"
+                 >
+                   Raw
+                 </Button>
+                 <Button
+                   variant={showFormatted ? 'secondary' : 'ghost'}
+                   onClick={() => setShowFormatted(true)}
+                   className="text-xs h-7 px-3"
+                   disabled={!formattedContent}
+                 >
+                   Formatted
+                 </Button>
+               </div>
              </div>
              <Button variant="ghost" onClick={copyToClipboard} className="text-xs h-7 gap-1.5">
                {ICONS.Copy} Copy
@@ -134,7 +234,7 @@ const HtmlFetcher: React.FC = () => {
             {/* Content */}
             <div className="flex-1 overflow-auto p-4 custom-scrollbar">
               <pre className="text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all text-zinc-300">
-                <code dangerouslySetInnerHTML={{ __html: content.replace(/</g, '&lt;').replace(/>/g, '&gt;') }} />
+                <code dangerouslySetInnerHTML={{ __html: (showFormatted && formattedContent ? formattedContent : content).replace(/</g, '&lt;').replace(/>/g, '&gt;') }} />
               </pre>
             </div>
 
@@ -142,7 +242,7 @@ const HtmlFetcher: React.FC = () => {
             <div className="h-6 bg-[#111] border-t border-zinc-800 flex items-center px-3 justify-end gap-4 text-[10px] text-zinc-600 font-mono select-none">
                <span>UTF-8</span>
                <span>HTML</span>
-               <span>Ln {content.split('\n').length}</span>
+               <span>Ln {(showFormatted && formattedContent ? formattedContent : content).split('\n').length}</span>
             </div>
           </div>
         </div>
